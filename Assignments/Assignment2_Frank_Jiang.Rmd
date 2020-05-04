@@ -1,0 +1,115 @@
+---
+title: "Assignment2_Frank_Jiang"
+author: "Frank Jiang"
+date: "4/29/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, warning=FALSE,message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+`1 The impact of Medicaid Expansion on Voter Participation`
+
+```{r,warning=FALSE}
+library(brms)
+library(haven)
+unzip("100.00019026_supp.zip")
+oregon<- as_factor(read_dta(file.path('19026_supp','Data','individual_voting_data.dta')))
+table(oregon$treatment)
+```
+`1.1 Priors adn Priors Predictive Distribution with brms`
+
+For this part, we are focusing on the Intent to treat effect on being selected for the Medicaid lottery on the outcome variable of Registered as a republican(variable rep_1) using a Bernoulli models. 
+
+```{r,warning=F}
+get_prior(rep_1~treatment+numhh_list,family='bernoulli',data=oregon)
+prior1<- c(set_prior('normal(0.2,0.5)',class='b',coef='treatment'),
+           set_prior('normal(0,1)',class='b',coef='numhh_listsignedselfupP1additionalperson'),
+           set_prior('normal(0,1)',class='b',coef='numhh_listsignedselfupP2additionalpeople'),
+           set_prior('normal(0,5)',class='Intercept'))
+ppd1<- brm(rep_1~treatment+numhh_list,family='bernoulli',data=oregon,prior=prior1,sample_prior = 'only')
+summary(ppd1)
+ppe1<- pp_expect(ppd1,nsamples = 400)
+plot(density(ppe1))
+```
+As the plot show, we can conclude that based on our prior distribution, the density plot of our probability that $y_n=1$ is generally distributed around 0 and 1. 
+
+`1.2  Posterior Distribution`
+```{r}
+post_1<- brm(rep_1~treatment+numhh_list,family='bernoulli',data=oregon,prior=prior1)
+summary(post_1)
+hypothesis(post_1,'treatment>0')
+```
+The posterior probability that winning the lottery has a positive effect is 1. However, we cannot conclude that winning the lottery results in registered as a republican. 
+
+`1.3 Alternative Model`
+```{r}
+get_prior(rep_1~treatment+young+old+female+male,family='bernoulli',data=oregon)
+prior2<- c(set_prior('normal(0.2,0.5)',class='b',coef='treatment'),
+           set_prior('normal(-0.3,0.5)',class='b',coef='young'),
+           set_prior('normal(0.4,0.5)',class='b',coef='old'),
+           set_prior('normal(0,0.5)',class='b',coef='female'),
+           set_prior('normal(0.1,0.2)',class='b',coef='male'))
+post_2<-brm(rep_1~treatment+young+old+female+male,family='bernoulli',data=oregon,prior=prior2)
+summary(post_2)
+result<- loo_subsample(post_1,post_2,compare=TRUE)
+result
+result$diffs
+```
+According to our ELPD calculation comparison done by loo_subsample(), we can have some confidence in concluding that the second model which includes male, female, old, and young as preidctors improves the estimated Expected Log Predictive Density. 
+
+
+`2. Coronavirus in NYC`
+```{r}
+ROOT <- "https://raw.githubusercontent.com/nychealth" 
+NYC <- readr::read_csv(paste0(ROOT,"/coronavirus-data/master/case-hosp-death.csv"))
+NYC$day<- 1:nrow(NYC)
+```
+
+`2.1 Negative Binomial Model`
+```{r}
+get_prior(CASE_COUNT~poly(day,degree=2,raw=FALSE),data=NYC,family='negbinomial')
+prior3<- c(set_prior('normal(0,10)',class='b',coef='polydaydegreeEQ2rawEQFALSE1'),
+         set_prior('normal(0,5)',class='b',coef='polydaydegreeEQ2rawEQFALSE2'),
+         set_prior('normal(0,10)',class='shape'))
+post_3<- brm(CASE_COUNT~poly(day,degree=2,raw=FALSE),data=NYC,family='negbinomial',prior=prior3)
+summary(post_3)
+ppe2<- pp_expect(post_3,nsample=400)
+plot(density(ppe2))
+```
+
+`2.2 Poisson Model`
+```{r}
+get_prior(CASE_COUNT~poly(day,degree=2,raw=FALSE),data=NYC,family='poisson')
+prior4<- c(set_prior('normal(0,10)',class='b',coef='polydaydegreeEQ2rawEQFALSE1'),
+         set_prior('normal(0,5)',class='b',coef='polydaydegreeEQ2rawEQFALSE2'))
+post_4<- brm(CASE_COUNT~poly(day,degree=2,raw=FALSE),data=NYC,prior=prior4,family='poisson')
+summary(post_4)
+ppe3<- pp_expect(post_4,nsample=400)
+plot(density(ppe3))
+```
+
+`2.3 Model Comparison`
+```{r}
+loo(post_3,post_4,reloo=T)
+pairs(post_3)
+pairs(post_4)
+pp_check(post_3)
+pp_check(post_4)
+```
+Based on the calculated ELPD difference of 10707.2 of the model comparison(which is multiple times higher than the standard error), we can conclude that the negative binomial model fits better than the poisson model. The pp_check shows the graph indicates that the negative binomial model fits better as well. 
+
+`2.4 Posterior Prediction`
+```{r}
+extended<- as.data.frame(matrix(nrow=7,ncol=5))
+colnames(extended)<-c('DATE_OF_INTEREST','CASE_COUNT','HOSPITALIZED_COUNT','DEATH_COUNT','day')
+extended$day<- c(62:68)
+NYC_new<- rbind(NYC,extended)
+Pred<- posterior_predict(post_3,newdata=NYC_new)
+Pred_result<- colMeans(Pred)
+NYC_new$predicted_count<- Pred_result
+```
+Over the coming week, according to our model predictions, the new confirmed coronavirus cases are likely to slowly decay from 365 to 72. I would describe it as the explosion of the coronavirus is calming down. However, there are new cases that are arising every dya, implying that there is still a significant amount of increase in new confirmed cases over the next week. 
+
+
